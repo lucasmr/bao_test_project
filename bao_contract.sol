@@ -1631,7 +1631,6 @@ contract BaoMasterFarmer is Ownable, Authorizable {
         uint256 rewardDebtAtBlock; // the last block user stake
 		uint256 lastWithdrawBlock; // the last block a user withdrew at.
 		uint256 firstDepositBlock; // the last block a user deposited at.
-		uint256 blockdelta; //time passed since withdrawals
 		uint256 lastDepositBlock;
         //
         // We do some fancy math here. Basically, any point in time, the amount of Baos
@@ -1678,10 +1677,8 @@ contract BaoMasterFarmer is Ownable, Authorizable {
     // Bonus muliplier for early Bao makers.
     uint256[] public REWARD_MULTIPLIER =[4096, 2048, 2048, 1024, 1024, 512, 512, 256, 256, 256, 256, 256, 256, 256, 256, 128, 128, 128, 128, 128, 128, 128, 128, 128, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 16, 8, 8, 8, 8, 32, 32, 64, 64, 64, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 256, 256, 256, 128, 128, 128, 128, 128, 128, 128, 128, 128, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 16, 16, 16, 16, 8, 8, 8, 4, 2, 1, 0];
     uint256[] public HALVING_AT_BLOCK; // init in constructor function
-    uint256[] public blockDeltaStartStage;
     uint256[] public blockDeltaEndStage;
-    uint256[] public userFeeStage;
-    uint256[] public devFeeStage;
+    uint256[] public userFeeStage; //= [2500, 800, 400, 200, 100, 50, 25, 10];
     uint256 public FINISH_BONUS_AT_BLOCK;
     uint256 public userDepFee;
     uint256 public devDepFee;
@@ -1723,10 +1720,8 @@ contract BaoMasterFarmer is Ownable, Authorizable {
         uint256 _halvingAfterBlock,
         uint256 _userDepFee,
         uint256 _devDepFee,
-        uint256[] memory _blockDeltaStartStage,
         uint256[] memory _blockDeltaEndStage,
-        uint256[] memory _userFeeStage,
-        uint256[] memory _devFeeStage
+        uint256[] memory _userFeeStage
     ) public {
         Bao = _Bao;
         devaddr = _devaddr;
@@ -1737,10 +1732,8 @@ contract BaoMasterFarmer is Ownable, Authorizable {
         START_BLOCK = _startBlock;
 	    userDepFee = _userDepFee;
 	    devDepFee = _devDepFee;
-	    blockDeltaStartStage = _blockDeltaStartStage;
 	    blockDeltaEndStage = _blockDeltaEndStage;
 	    userFeeStage = _userFeeStage;
-	    devFeeStage = _devFeeStage;
         for (uint256 i = 0; i < REWARD_MULTIPLIER.length - 1; i++) {
             uint256 halvingAtBlock = _halvingAfterBlock.add(i + 1).add(_startBlock);
             HALVING_AT_BLOCK.push(halvingAtBlock);
@@ -1986,21 +1979,16 @@ contract BaoMasterFarmer is Ownable, Authorizable {
         UserGlobalInfo storage refer = userGlobalInfo[_ref];
         UserGlobalInfo storage current = userGlobalInfo[msg.sender];
         
-        if(refer.referrals[msg.sender] > 0){
-            refer.referrals[msg.sender] = refer.referrals[msg.sender] + _amount;
-            refer.globalRefAmount = refer.globalRefAmount + _amount;
-        } else {
-            refer.referrals[msg.sender] = refer.referrals[msg.sender] + _amount;
+        if (refer.referrals[msg.sender] == 0) {
             refer.totalReferals = refer.totalReferals + 1;
-            refer.globalRefAmount = refer.globalRefAmount + _amount;
         }
-
-        
-        current.globalAmount = current.globalAmount + _amount.mul(userDepFee).div(100);
-        
+        refer.referrals[msg.sender] = refer.referrals[msg.sender] + _amount;
+        refer.globalRefAmount = refer.globalRefAmount + _amount;
+        current.globalAmount = current.globalAmount + _amount.mul(userDepFee).div(10000);
         updatePool(_pid);
         _harvest(_pid);
         pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount);
+
         if (user.amount == 0) {
             user.rewardDebtAtBlock = block.number;
         }
@@ -2009,75 +1997,84 @@ contract BaoMasterFarmer is Ownable, Authorizable {
         devr.amount = devr.amount.add(_amount.sub(_amount.mul(devDepFee).div(10000)));
         devr.rewardDebt = devr.amount.mul(pool.accBaoPerShare).div(1e12);
         emit Deposit(msg.sender, _pid, _amount);
-		if(user.firstDepositBlock > 0){
-		} else {
-			user.firstDepositBlock = block.number;
-		}
-		user.lastDepositBlock = block.number;
+
+        if (user.firstDepositBlock == 0) {
+            user.firstDepositBlock = block.number;
+        }
+        user.lastDepositBlock = block.number;
     }
-    
+
   // Withdraw LP tokens from BaoMasterFarmer.
     function withdraw(uint256 _pid, uint256 _amount, address _ref) public {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         UserGlobalInfo storage refer = userGlobalInfo[_ref];
         UserGlobalInfo storage current = userGlobalInfo[msg.sender];
-        require(user.amount >= _amount, "BaoMasterFarmer::withdraw: not good");
-        if(_ref != address(0)){
-                refer.referrals[msg.sender] = refer.referrals[msg.sender] - _amount;
-                refer.globalRefAmount = refer.globalRefAmount - _amount;
-            }
+        uint256 current_userfee;
+
+        require(_amount > 0 && user.amount >= _amount, "BaoMasterFarmer::withdraw: not good");
+
+        if ( _ref != address(0) ) {
+        	refer.referrals[msg.sender] = refer.referrals[msg.sender] - _amount;
+        	refer.globalRefAmount = refer.globalRefAmount - _amount;
+		}
         current.globalAmount = current.globalAmount - _amount;
-        
         updatePool(_pid);
         _harvest(_pid);
+        user.amount = user.amount.sub(_amount);
 
-        if(_amount > 0) {
-            user.amount = user.amount.sub(_amount);
-			if(user.lastWithdrawBlock > 0){
-				user.blockdelta = block.number - user.lastWithdrawBlock; }
-			else {
-				user.blockdelta = block.number - user.firstDepositBlock;
-			}
-			if(user.blockdelta == blockDeltaStartStage[0] || block.number == user.lastDepositBlock){
-				//25% fee for withdrawals of LP tokens in the same block this is to prevent abuse from flashloans
-				pool.lpToken.safeTransfer(address(msg.sender), _amount.mul(userFeeStage[0]).div(100));
-				pool.lpToken.safeTransfer(address(devaddr), _amount.mul(devFeeStage[0]).div(100));
-			} else if (user.blockdelta >= blockDeltaStartStage[1] && user.blockdelta <= blockDeltaEndStage[0]){
-				//8% fee if a user deposits and withdraws in under between same block and 59 minutes.
-				pool.lpToken.safeTransfer(address(msg.sender), _amount.mul(userFeeStage[1]).div(100));
-				pool.lpToken.safeTransfer(address(devaddr), _amount.mul(devFeeStage[1]).div(100));
-			} else if (user.blockdelta >= blockDeltaStartStage[2] && user.blockdelta <= blockDeltaEndStage[1]){
-				//4% fee if a user deposits and withdraws after 1 hour but before 1 day.
-				pool.lpToken.safeTransfer(address(msg.sender), _amount.mul(userFeeStage[2]).div(100));
-				pool.lpToken.safeTransfer(address(devaddr), _amount.mul(devFeeStage[2]).div(100));
-			} else if (user.blockdelta >= blockDeltaStartStage[3] && user.blockdelta <= blockDeltaEndStage[2]){
-				//2% fee if a user deposits and withdraws between after 1 day but before 3 days.
-				pool.lpToken.safeTransfer(address(msg.sender), _amount.mul(userFeeStage[3]).div(100));
-				pool.lpToken.safeTransfer(address(devaddr), _amount.mul(devFeeStage[3]).div(100));
-			} else if (user.blockdelta >= blockDeltaStartStage[4] && user.blockdelta <= blockDeltaEndStage[3]){
-				//1% fee if a user deposits and withdraws after 3 days but before 5 days.
-				pool.lpToken.safeTransfer(address(msg.sender), _amount.mul(userFeeStage[4]).div(100));
-				pool.lpToken.safeTransfer(address(devaddr), _amount.mul(devFeeStage[4]).div(100));
-			}  else if (user.blockdelta >= blockDeltaStartStage[5] && user.blockdelta <= blockDeltaEndStage[4]){
-				//0.5% fee if a user deposits and withdraws if the user withdraws after 5 days but before 2 weeks.
-				pool.lpToken.safeTransfer(address(msg.sender), _amount.mul(userFeeStage[5]).div(1000));
-				pool.lpToken.safeTransfer(address(devaddr), _amount.mul(devFeeStage[5]).div(1000));
-			} else if (user.blockdelta >= blockDeltaStartStage[6] && user.blockdelta <= blockDeltaEndStage[5]){
-				//0.25% fee if a user deposits and withdraws after 2 weeks.
-				pool.lpToken.safeTransfer(address(msg.sender), _amount.mul(userFeeStage[6]).div(10000));
-				pool.lpToken.safeTransfer(address(devaddr), _amount.mul(devFeeStage[6]).div(10000));
-			} else if (user.blockdelta > blockDeltaStartStage[7]) {
-				//0.1% fee if a user deposits and withdraws after 4 weeks.
-				pool.lpToken.safeTransfer(address(msg.sender), _amount.mul(userFeeStage[7]).div(10000));
-				pool.lpToken.safeTransfer(address(devaddr), _amount.mul(devFeeStage[7]).div(10000));
-			}
-		user.rewardDebt = user.amount.mul(pool.accBaoPerShare).div(1e12);
+        current_userfee = getCurrentUserFee(_pid, msg.sender);
+        pool.lpToken.safeTransfer(address(msg.sender), _amount.mul(10000-current_userfee).div(10000));
+        pool.lpToken.safeTransfer(address(devaddr), _amount.mul(current_userfee).div(10000));
+
+        user.rewardDebt = user.amount.mul(pool.accBaoPerShare).div(1e12);
         emit Withdraw(msg.sender, _pid, _amount);
-		user.lastWithdrawBlock = block.number;
-			}
+
+        if (user.amount == 0) {
+            user.firstDepositBlock = 0;
+            user.lastWithdrawBlock = 0;
+        } else {
+            user.lastWithdrawBlock = block.number;
+        }
+    }
+
+    // Show the current penalty for withdrawal.
+    function getCurrentUserFee(uint256 _pid, address _user) public view returns(uint256) {
+        UserInfo storage user = userInfo[_pid][_user];
+        uint256 blockdelta;
+
+        if (user.lastWithdrawBlock > 0) {
+            blockdelta = block.number - user.lastWithdrawBlock;
+        } else {
+            blockdelta = block.number - user.firstDepositBlock;
         }
 
+        if (blockdelta == 0 || block.number == user.lastDepositBlock) {
+            //25% fee for withdrawals of LP tokens in the same block; this is to prevent abuse from flashloans
+            return userFeeStage[0];
+        } else if (blockdelta <= blockDeltaEndStage[0]) {
+            //8% fee if a user deposits and withdraws after the same block but before 1 hour.
+            return userFeeStage[1];
+        } else if (blockdelta <= blockDeltaEndStage[1]) {
+            //4% fee if a user deposits and withdraws after 1 hour but before 1 day.
+            return userFeeStage[2];
+        } else if (blockdelta <= blockDeltaEndStage[2]) {
+            //2% fee if a user deposits and withdraws after 1 day but before 3 days.
+            return userFeeStage[3];
+        } else if (blockdelta <= blockDeltaEndStage[3]) {
+            //1% fee if a user deposits and withdraws after 3 days but before 5 days.
+            return userFeeStage[4];
+        } else if (blockdelta <= blockDeltaEndStage[4]) {
+            //0.5% fee if a user deposits and withdraws after 5 days but before 2 weeks.
+            return userFeeStage[5];
+        } else if (blockdelta <= blockDeltaEndStage[5]) {
+            //0.25% fee if a user deposits and withdraws after 2 weeks but before 4 weeks.
+            return userFeeStage[6];
+        } else {
+            //0.1% fee if a user deposits and withdraws after 4 weeks.
+            return userFeeStage[7];
+        }
+    }
 
     // Withdraw without caring about rewards. EMERGENCY ONLY. This has the same 25% fee as same block withdrawals to prevent abuse of thisfunction.
     function emergencyWithdraw(uint256 _pid) public {
@@ -2210,20 +2207,12 @@ contract BaoMasterFarmer is Ownable, Authorizable {
 	    
 	}
 	
-	function setStageStarts(uint[] memory _blockStarts) public onlyAuthorized() {
-        blockDeltaStartStage = _blockStarts;
-    }
-    
     function setStageEnds(uint[] memory _blockEnds) public onlyAuthorized() {
         blockDeltaEndStage = _blockEnds;
     }
     
     function setUserFeeStage(uint[] memory _userFees) public onlyAuthorized() {
         userFeeStage = _userFees;
-    }
-    
-    function setDevFeeStage(uint[] memory _devFees) public onlyAuthorized() {
-        devFeeStage = _devFees;
     }
     
     function setDevDepFee(uint _devDepFees) public onlyAuthorized() {
@@ -2233,7 +2222,4 @@ contract BaoMasterFarmer is Ownable, Authorizable {
     function setUserDepFee(uint _usrDepFees) public onlyAuthorized() {
         userDepFee = _usrDepFees;
     }
-
-
-
 }
