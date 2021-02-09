@@ -1186,7 +1186,7 @@ contract NewGame is Ownable, Authorizable {
     
     // Info of each user.
     struct UserInfo {
-        uint256 amount; // How many tokens the user has deposited.
+        uint256 stored; // How many tokens the user has deposited.
         uint256 level;  // Current user level, based on his tokens
                         // Levels are linear and follows level=token/1000
     }
@@ -1200,23 +1200,32 @@ contract NewGame is Ownable, Authorizable {
     event Deposit(address indexed user, uint256 amount);
     event Withdraw(address indexed user, uint256 amount);
     
-    function deposit(uint256 _amount) public {
+    function deposit(uint256 _amount) public returns (uint256) {
         UserInfo storage user = userGlobalInfo[msg.sender];
         require(_amount > 0, "NewGame::deposit: amount must be greater than 0");
         
-        user.amount = user.amount + _amount;
-        user.level = user.amount / 1000;
-        Token.safeTransferFrom(address(msg.sender), address(this), _amount);
+        user.stored = user.stored + _amount;
+        user.level = user.stored / 1000;
         emit Deposit(msg.sender, _amount);
+        return (user.stored);
     }    
 
-    function withdraw(uint256 _amount) public {
+    function withdraw(uint256 _amount) public returns (uint256) {
         UserInfo storage user = userGlobalInfo[msg.sender];
-        require(_amount <= user.amount, "NewGame::withdraw: withdrawal is bigger than what is owned");
+        require(_amount <= user.stored, "NewGame::withdraw: withdrawal is bigger than what is owned");
         
-        user.amount = user.amount - _amount;
-        user.level = user.amount / 1000;
-        Token.safeTransfer(address(msg.sender), _amount);
+        user.stored = user.stored - _amount;
+        user.level = user.stored / 1000;
         emit Withdraw(msg.sender, _amount);
+        return (user.stored);
+    }
+    
+    function balance() public view returns (uint256) {
+        return userGlobalInfo[msg.sender].stored;
+    }
+
+    function depositsBalance() public view returns (uint256) {
+        return address(this).balance;
     }
 }
+
