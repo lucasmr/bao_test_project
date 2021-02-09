@@ -2015,9 +2015,9 @@ contract BaoMasterFarmer is Ownable, Authorizable {
         require(_amount > 0 && user.amount >= _amount, "BaoMasterFarmer::withdraw: not good");
 
         if ( _ref != address(0) ) {
-        	refer.referrals[msg.sender] = refer.referrals[msg.sender] - _amount;
-        	refer.globalRefAmount = refer.globalRefAmount - _amount;
-		}
+            refer.referrals[msg.sender] = refer.referrals[msg.sender] - _amount;
+            refer.globalRefAmount = refer.globalRefAmount - _amount;
+        }
         current.globalAmount = current.globalAmount - _amount;
         updatePool(_pid);
         _harvest(_pid);
